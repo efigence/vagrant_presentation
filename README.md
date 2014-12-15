@@ -3,8 +3,11 @@ vagrant_presentation
 
 presentation abot vagrant
 
-KK - wirtualizacja (virtualbox), graph
-KK - vagrant (wirtualizacje + provisioning)
+KK
+- wirtualizacja (virtualbox), graph
+	- http://www.digitalforreallife.com/wp-content/uploads/2012/11/django.png
+- vagrant (wirtualizacje + provisioning)
+	- http://nefariousdesigns.co.uk/assets/img/vagrantfile.png
 
 RL - puppet (ogólnie), graph, przepływ
 RL   - w kontekście adminów (nasz puppet, centos6, devel11)
