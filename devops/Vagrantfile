@@ -1,0 +1,152 @@
+# -*- mode: ruby -*-
+# vi: set ft=ruby :
+Vagrant.require_version ">= 1.6.2"
+
+require 'net/http'
+
+begin
+  # tu powinien byc url po https i sprawdzanie certa
+  vagrantfile_uri = URI('http://devel11.non.3dart.com/vagrant/Vagrantfile.common')
+  vagrantfile = Net::HTTP.get(vagrantfile_uri)
+  eval vagrantfile
+rescue LoadError
+  # sprawdz czy masz starsza wersje lokalnie albo cos
+end
+
+Vagrant.configure("2") do |config|
+  Util.config_bootstrap(config)
+
+  config.vm.define :postgres do |postgres|
+    postgres.vm.hostname =  "postgres."  + Util.host.downcase + ".devops.non.3dart.com"
+    Util.add_fact('vagrant_platform', 'postgres', postgres.vm.hostname)
+    postgres.vm.network :private_network, ip: "192.168.80.15"
+    postgres.vm.provider :virtualbox do |vb|
+      vb.customize ["modifyvm", :id, "--memory", 1024]
+      vb.customize ["modifyvm", :id, "--ioapic", "on"]
+      vb.customize ["modifyvm", :id, "--cpus", 1]
+      vb.customize ["modifyvm", :id, "--cpuexecutioncap", "50"]
+      vb.customize ["modifyvm", :id, "--uart1", "off"]
+      vb.customize ["modifyvm", :id, "--vram", 9]
+    end
+    # postgres.vm.synced_folder ".", "/vagrant", disabled: true
+    postgres.vm.provision :shell, inline: %Q(
+    export HOST=`echo $HOSTNAME|cut -d'.' -f1`
+    if [ -e /vagrant/.vagrant/$HOST.run_finished ]; then
+      bash /vagrant/bootstrap.$HOST.deploy.sh
+      fi
+    ), run: 'always'
+  end
+
+  config.vm.define :rabbitmq do |rabbitmq|
+    rabbitmq.vm.hostname =  "rabbitmq." + Util.host.downcase + ".devops.non.3dart.com"
+    Util.add_fact('vagrant_platform', 'rabbitmq', rabbitmq.vm.hostname)
+    rabbitmq.vm.network :private_network, ip: "192.168.80.35"
+    rabbitmq.vm.provider :virtualbox do |vb|
+      vb.customize ["modifyvm", :id, "--memory", 512]
+      vb.customize ["modifyvm", :id, "--ioapic", "on"]
+      vb.customize ["modifyvm", :id, "--cpus", 1]
+      vb.customize ["modifyvm", :id, "--cpuexecutioncap", "50"]
+      vb.customize ["modifyvm", :id, "--uart1", "off"]
+      vb.customize ["modifyvm", :id, "--vram", 9]
+    end
+
+    rabbitmq.vm.provision :shell, inline: %Q(
+    export HOST=`echo $HOSTNAME|cut -d'.' -f1`
+    if [ -e /vagrant/.vagrant/$HOST.run_finished ]; then
+      bash /vagrant/bootstrap.$HOST.deploy.sh
+      fi
+    ), run: 'always'
+  end
+
+  config.vm.define :rabbitmq_fed, autostart: false do |rabbitmq|
+    rabbitmq.vm.hostname =  "rabbitmq-fed." + Util.host.downcase + ".devops.non.3dart.com"
+    Util.add_fact('vagrant_platform', 'rabbitmq', rabbitmq.vm.hostname)
+    rabbitmq.vm.network :private_network, ip: "192.168.80.36"
+    rabbitmq.vm.provider :virtualbox do |vb|
+      vb.customize ["modifyvm", :id, "--memory", 512]
+      vb.customize ["modifyvm", :id, "--ioapic", "on"]
+      vb.customize ["modifyvm", :id, "--cpus", 1]
+      vb.customize ["modifyvm", :id, "--cpuexecutioncap", "50"]
+      vb.customize ["modifyvm", :id, "--uart1", "off"]
+      vb.customize ["modifyvm", :id, "--vram", 9]
+    end
+
+    rabbitmq.vm.provision :shell, inline: %Q(
+    export HOST=`echo $HOSTNAME|cut -d'.' -f1`
+    if [ -e /vagrant/.vagrant/$HOST.run_finished ]; then
+      bash /vagrant/bootstrap.$HOST.deploy.sh
+      fi
+    ), run: 'always'
+  end
+
+  config.vm.define :worker, autostart: false do |worker|
+    worker.vm.hostname =  "worker.#{Util.host.downcase}.devops.non.3dart.com"
+    # rails bo musi być ruby i okolice
+    Util.add_fact('vagrant_platform', 'rails', worker.vm.hostname)
+    worker.vm.network :private_network, ip: "192.168.80.65"
+    worker.vm.provider :virtualbox do |vb|
+      vb.customize ["modifyvm", :id, "--memory", 512] # mniej nie dajemy bo puppet nie wyrabia
+      vb.customize ["modifyvm", :id, "--cpus", 2]
+      # vb.customize ["modifyvm", :id, "--cpuexecutioncap", "25"]
+      vb.customize ["modifyvm", :id, "--uart1", "off"]
+    end
+    require 'open3'
+    repo_url = "ssh://git.non.3dart.com/usr/src/java/git/efiduty"
+    filepath = "tmp/worker_vm"
+    FileUtils.mkdir_p filepath
+    %w(aerial sondy collector).each do |proj|
+      rev = Open3.pipeline_r("git ls-remote --heads #{repo_url} #{proj}", 'cut -f1')[0].read.strip
+      filename = "#{proj}-#{rev}.tar"
+      unless File.exists? "#{filepath}/#{filename}"
+        puts "Pobieram podprojekt #{proj} do pliku #{filepath}/#{filename}"
+        #system "git archive -o #{filepath}/#{filename} --remote=#{repo_url} #{proj}"
+      end
+      worker.vm.provision 'file' do |prov|
+        prov.source = "#{filepath}/#{filename}"
+        prov.destination = "/home/vagrant/#{filename}"
+      end
+
+      # odpakuj
+      worker.vm.provision :shell, inline: %Q(
+      mkdir -p /home/vagrant/#{proj}
+      rm -rf /home/vagrant/#{proj}/*
+      cd /home/vagrant/#{proj}
+      tar xf ../#{filename}
+      ), privileged: false, run: 'always'
+    end
+
+    worker.vm.provision :shell, inline: %Q(
+    export HOST=`echo $HOSTNAME|cut -d'.' -f1`
+    if [ -e /vagrant/.vagrant/$HOST.run_finished ]; then
+      bash /vagrant/bootstrap.$HOST.deploy.sh
+      fi
+    ), run: 'always'
+
+    worker.vm.provision :shell, inline: %Q(
+      echo "Podgląd loga usług: tmux attach"
+      echo "API collectora: http://192.168.80.65:9292/"
+      echo "Sidekiq: http://192.168.80.65:5000/"
+      echo "Upewnij się że maszyna z rabbitmq jest uruchomiona i usługa rabbit na niej działa (vagrant up rabbitmq, vagrant ssh rabbitmq, sudo service rabbitmq-server start)"
+    ), privileged: false, run: 'always'
+  end
+
+  config.vm.define :rails do |rails|
+    rails.vm.hostname =  "rails-single." + Util.host.downcase + ".devops.non.3dart.com"
+    Util.add_fact('vagrant_platform', 'rails', rails.vm.hostname)
+    rails.vm.network :private_network, ip: "192.168.80.100"
+    rails.vm.provider :virtualbox do |vb|
+      vb.customize ["modifyvm", :id, "--memory", 3072]
+      vb.customize ["modifyvm", :id, "--ioapic", "on"]
+      vb.customize ["modifyvm", :id, "--cpus", 2]
+      vb.customize ["modifyvm", :id, "--uart1", "off"]
+      vb.customize ["modifyvm", :id, "--vram", 9]
+    end
+
+    rails.vm.provision :shell, inline: %Q(
+    export HOST=`echo $HOSTNAME|cut -d'.' -f1`
+    if [ -e /vagrant/.vagrant/$HOST.run_finished ]; then
+      bash /vagrant/bootstrap.$HOST.deploy.sh
+      fi
+    ), run: 'always'
+  end
+end
