@@ -1,7 +1,7 @@
 vagrant_presentation
 ====================
 
-presentation abot vagrant
+presentation about vagrant
 
 KK
 - wirtualizacja (virtualbox), graph
